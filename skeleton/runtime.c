@@ -118,7 +118,57 @@ void RunCmdFork(commandT* cmd, bool fork)
 
 void RunCmdBg(commandT* cmd)
 {
-  // TODO
+  // Added bool fork as a parameter.
+  if (cmd->argc<=0)
+    return;
+  char buf[1024];
+  strcpy(buf,""); //Initialize to empty string;
+  int i;
+  for(i = 0 ; i<=cmd->argc;i++)
+    if ((cmd)->argv[i] != NULL){
+      strcat(buf," ");
+      strcat(buf,(cmd)->argv[i]);
+    }
+  // Creating fork. Parent will exit and child will continue to run the built-in command.
+  int pid = fork();
+  if (pid == 0) {
+    /* child */
+    if (IsBuiltIn(cmd->argv[0])){
+      // copied from RunBuiltInCmd
+      char *name[4];
+      name[0] = "sh";
+      name[1] = "-c";
+      name[2] = buf;
+      name[3] = NULL;
+      if (execv("/bin/sh", name) == -1) {
+        /* here errno is set.  You can retrieve a message with either
+         * perror() or strerror()
+         */
+        perror(buf);
+        return;
+      }
+    }
+    else{
+      // copied from Exec
+      char *name[2];
+      name[0] = buf;
+      name[1] = NULL;
+      if (execv(cmd->name, name) == -1) {
+        /* here errno is set.  You can retrieve a message with either
+         * perror() or strerror()
+         */
+        perror(buf);
+        return;
+      }
+    }
+  } else {
+    // Main Thread
+    // Do not wait for child to finish
+    //int status;
+    //waitpid(pid, &status, 0);//Might need to change this because user might want to exit when the child program is running.
+    //printf("%s exited with status %d\n", buf, WEXITSTATUS(status));
+    return;
+  }
 }
 
 void RunCmdPipe(commandT* cmd1, commandT* cmd2)
@@ -182,6 +232,9 @@ static bool ResolveExternalCmd(commandT* cmd)
     buf[j] = '\0';
     strcat(buf, "/");
     strcat(buf,cmd->argv[0]);
+    //***********
+    //DEBUG fprintf(stderr, "%s\n",buf);
+    //***********
     if(stat(buf, &fs) >= 0){
       if(S_ISDIR(fs.st_mode) == 0)
         if(access(buf,X_OK) == 0){/*Whether it's an executable or the user has required permisson to run it*/
@@ -193,41 +246,98 @@ static bool ResolveExternalCmd(commandT* cmd)
   return FALSE; /*The command is not found or the user don't have enough priority to run.*/
 }
 
+//This function executes an outside command.
 static void Exec(commandT* cmd, bool forceFork)
 {
-}
-
-static bool IsBuiltIn(char* cmd)
-{
-  return TRUE;     
-}
-
-
-static void RunBuiltInCmd(commandT* cmd)
-{
-  // Creating fork. Parent will exit and child will continue to run the built-in command.
-  int pid = fork();
-  if (pid == 0) {
-  } else {
-      return;
-  }
-  char *name[4];
+  //DEBUGfprintf(stderr, "cmd->name: %s\n", cmd->name);
   char buf[1024];
   strcpy(buf,""); //Initialize to empty string;
   int i;
-  name[0] = "sh";
-  name[1] = "-c";
-  name[2] = buf;
-  name[3] = NULL;
   for(i = 0 ; i<=cmd->argc;i++)
     if ((cmd)->argv[i] != NULL){
       strcat(buf," ");
       strcat(buf,(cmd)->argv[i]);
     }
-  //fprintf(stderr, "%s", buf);
-  //fprintf(stderr, "%s", name[2]);
-  execv("/bin/sh", name);
+  //DEBUG fprintf(stderr, "buf: %s\n", buf);
+  // Creating fork. Parent will exit and child will continue to run the built-in command.
 
+  int pid;
+  if (forceFork)
+    pid = fork();
+  if (pid == 0 || !forceFork) {
+    /* child */
+    char *name[2];
+    name[0] = buf;
+    name[1] = NULL;
+    if (execv(cmd->name, name) == -1) {
+      /* here errno is set.  You can retrieve a message with either
+       * perror() or strerror()
+       */
+      perror(buf);
+      return;
+    }
+  } else {
+    int status;
+    waitpid(pid, &status, 0);
+    printf("%s exited with status %d\n", buf, WEXITSTATUS(status));
+    return;
+  }
+
+}
+
+static bool IsBuiltIn(char* cmd)
+{
+  char buf[1024];
+  struct stat fs;
+  strcpy(buf,"/bin/");
+  strcat(buf,cmd);
+  //***********
+  fprintf(stderr, "%s\n",buf);
+  //***********
+  if(stat(buf, &fs) >= 0){
+    if(S_ISDIR(fs.st_mode) == 0)
+      if(access(buf,X_OK) == 0){/*Whether it's an executable or the user has required permisson to run it*/
+        fprintf(stderr, "%s\n","Is BuiltIn");
+        return TRUE;
+      }
+  }
+  fprintf(stderr, "%s\n","Is not BuiltIn");
+  return FALSE;     
+}
+
+
+static void RunBuiltInCmd(commandT* cmd)
+{
+    char buf[1024];
+    strcpy(buf,""); //Initialize to empty string;
+    int i;
+    for(i = 0 ; i<=cmd->argc;i++)
+      if ((cmd)->argv[i] != NULL){
+        strcat(buf," ");
+        strcat(buf,(cmd)->argv[i]);
+      }
+  // Creating fork. Parent will exit and child will continue to run the built-in command.
+  int pid = fork();
+  if (pid == 0) {
+    /* child */
+    char *name[4];
+    name[0] = "sh";
+    name[1] = "-c";
+    name[2] = buf;
+    name[3] = NULL;
+    if (execv("/bin/sh", name) == -1) {
+      /* here errno is set.  You can retrieve a message with either
+       * perror() or strerror()
+       */
+      perror(buf);
+      return;
+    }
+  } else {
+    int status;
+    waitpid(pid, &status, 0);//Might need to change this because user might want to exit when the child program is running.
+    printf("%s exited with status %d\n", buf, WEXITSTATUS(status));
+    return;
+  }
 }
 
 void CheckJobs()
