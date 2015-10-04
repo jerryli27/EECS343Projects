@@ -38,6 +38,8 @@
 #include <signal.h>
 #include <string.h>
 #include <stdio.h>
+#include <sys/wait.h>
+#include <unistd.h>
 
 /************Private include**********************************************/
 #include "tsh.h"
@@ -64,6 +66,19 @@ static void sig_handler(int);
 
 /**************Implementation***********************************************/
 
+typedef struct bgjob_l {
+  pid_t pid;
+  pid_t parentpid;
+  char* pname;
+  int jobid;
+  char* status;
+  struct bgjob_l* next;
+} bgjobL;
+
+int fgpid;
+int is_shell;
+bgjobL *bgjobs;
+
 int main (int argc, char *argv[])
 {
   /* Initialize command buffer */
@@ -77,6 +92,8 @@ int main (int argc, char *argv[])
   {
     /* print prompt */
     printf("%%");
+    //printf("my status: %d", waitpid(getpid(), &status, WNOHANG));
+    //printf("%%");
     /* read command line */
     getCommandLine(&cmdLine, BUFSIZE);
 
@@ -96,8 +113,14 @@ int main (int argc, char *argv[])
     /* interpret command and line
      * includes executing of commands */
     Interpret(cmdLine);
-    /* print newline */
-    printf("\n");
+  }
+
+  // make sure all the shell's child processes are terminated
+  if (forceExit == TRUE) {
+    while (bgjobs != NULL) {
+      kill(bgjobs->pid, SIGINT);
+      bgjobs = bgjobs->next;
+    }
   }
 
   /* shell termination */
@@ -105,7 +128,68 @@ int main (int argc, char *argv[])
   return 0;
 } /* end main */
 
+
+// signals SIGTSTP, SIGINT are handled here
 static void sig_handler(int signo)
 {
+  int my_pid = getpid();
+
+  //handle singal SIGINT (ctrl-c)
+  if (signo == SIGINT) {
+    printf("pid %d got SIGINT \n", (int)my_pid);
+    // send signal to the foreground job
+    if (fgpid != 0) {
+      printf("sending SIGINT to process %d\n", (int)fgpid);
+      kill(fgpid, SIGINT);
+      fgpid = 0;
+    }
+    // all processes receiving this, if not the shell, must handle the signal normally
+    //   and send the signal to all its children
+    if (is_shell != 1) {
+      //go through the linked list to send signal to all its children
+      bgjobL* thisbg = bgjobs;
+      while (thisbg != NULL) {
+        if (thisbg->parentpid == my_pid) {
+          printf("sending SIGINT to process %d\n", (int)thisbg->pid);
+          kill(thisbg->pid, SIGINT);
+        }
+        thisbg = thisbg->next;
+      }
+      // handle the signal for itself
+      printf("process %d going to exit\n", (int)getpid());
+      SIG_DFL(SIGINT);
+    }
+  }
+
+  // handle signal SIGTSTP (ctrl-z), basically same like SIGINT
+  if (signo == SIGTSTP) {
+    printf("pid %d got SIGTSTP \n", (int)my_pid);
+    // send the signal to its fg job
+    if (fgpid != 0) {
+      printf("sending SIGTSTP to process %d\n", (int)fgpid);
+      kill(fgpid, SIGTSTP);
+      fgpid = 0;
+    }
+    // all processes receiving this, if not the shell, must handle the signal normally
+    //   and send the signal to all its children
+    if (is_shell != 1) {
+      //go through the linked list to send signal to all its children
+      bgjobL* thisbg = bgjobs;
+      while (thisbg != NULL) {
+        if (thisbg->parentpid == my_pid) {
+          printf("sending SIGTSTP to process %d\n", (int)thisbg->pid);
+          kill(thisbg->pid, SIGTSTP);
+          thisbg->status = "Stopped";
+        }
+        thisbg = thisbg->next;
+      }
+      // handle the signal for itself
+      printf("process %d going to stop\n", (int)getpid());
+      //SIG_DFL(SIGTSTP);
+    }
+  }
+
+  return;
+
 }
 
